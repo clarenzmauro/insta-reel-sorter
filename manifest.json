@@ -1,0 +1,29 @@
+{
+  "manifest_version": 3,
+  "name": "Insta Reel Sorter",
+  "version": "0.2.0", 
+  "description": "Manually sort Reels on an Instagram profile page by view count via popup.",
+  "permissions": [
+    "scripting", 
+    "activeTab" 
+  ],
+  "action": {
+    "default_popup": "popup.html", 
+    "default_icon": { 
+      "16": "images/icon16.png",
+      "48": "images/icon48.png",
+      "128": "images/icon128.png"
+    }
+  },
+  "background": {
+    "scripts": ["background.js"]
+  },
+  "icons": { 
+    "16": "images/icon16.png",
+    "48": "images/icon48.png",
+    "128": "images/icon128.png"
+  },
+  "host_permissions": [ 
+    "*://*.instagram.com/*"
+  ]
+}
