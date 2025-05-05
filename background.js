@@ -1,83 +1,138 @@
-chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-    if (request.action === "sortReels") {
-      console.log("Background: Received sortReels message.");
-      chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-        // Check for errors during tab query
-        if (chrome.runtime.lastError) {
-          console.error("Background: Tab query error:", chrome.runtime.lastError);
-          sendResponse({ status: "Error: Tab query failed" });
-          return true; // Keep message channel open for async response
-        }
-        if (!tabs || tabs.length === 0) {
-          console.error("Background: No active tab found.");
-          sendResponse({ status: "Error: No active tab" });
-          return true;
-        }
-        const activeTab = tabs[0];
-  
-        // Check if the tab has a URL and it's an Instagram page
-        if (activeTab.url && activeTab.url.includes("instagram.com")) {
-          console.log("Background: Active tab is Instagram:", activeTab.id);
-  
-          // 1. Inject content.js. executeScript is smart enough not to re-inject if already present.
-          chrome.scripting
-            .executeScript({
-              target: { tabId: activeTab.id },
-              files: ["content.js"],
-            })
-            .then(() => {
-              console.log(
-                "Background: content.js successfully injected or already present."
-              );
-              // 2. Execute the sortReelsByViews function defined within content.js
-              return chrome.scripting.executeScript({
-                target: { tabId: activeTab.id },
-                func: () => sortReelsByViews(), // <-- Execute the main sort function directly
-              });
-            })
-            .then((results) => {
-              // Check results for errors from the executed function
-              if (chrome.runtime.lastError) {
-                console.error(
-                  "Background: Error during function execution:",
-                  chrome.runtime.lastError
-                );
-                sendResponse({
-                  status: `Execution Error: ${chrome.runtime.lastError.message}`,
-                });
-              } else if (results && results[0] && results[0].error) {
-                console.error(
-                  "Background: Error reported from sortReelsByViews execution:",
-                  results[0].error
-                );
-                sendResponse({
-                  status: `Function Execution Error: ${results[0].error}`,
-                });
-              } else {
-                console.log(
-                  "Background: sortReelsByViews function executed successfully."
-                );
-                sendResponse({ status: "Sort initiated successfully!" });
-              }
-            })
-            .catch((error) => {
-              console.error(
-                "Background: Failed to inject script or execute function:",
-                error
-              );
-              sendResponse({ status: `Injection/Execution Error: ${error.message || error}` });
-            });
-        } else {
-          console.log(
-            "Background: Active tab is not an Instagram page:",
-            activeTab.url
-          );
-          sendResponse({ status: "Error: Not an Instagram page" });
-        }
-      });
-      // Return true crucial for indicating asynchronous response handling
-      return true;
+// Initialize storage if it doesn't exist
+chrome.runtime.onInstalled.addListener(() => {
+  chrome.storage.local.get(["trackedReels"], (result) => {
+    if (!result.trackedReels) {
+      chrome.storage.local.set({ trackedReels: [] });
+      console.log("Background: Initialized trackedReels storage.");
     }
-    return false;
   });
-  
+});
+
+// Listener for messages from content script or popup
+chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+  // --- Handle Tracking Request from Content Script ---
+  if (request.action === "trackReel" && request.data) {
+    const newReel = request.data;
+    console.log("Background: Received trackReel:", newReel.link);
+
+    chrome.storage.local.get(["trackedReels"], (result) => {
+      if (chrome.runtime.lastError) {
+        console.error(
+          "Background: Error getting storage:",
+          chrome.runtime.lastError
+        );
+        sendResponse({ status: "Error getting storage" });
+        return true;
+      }
+
+      let reels = result.trackedReels || [];
+      // Check if link already exists
+      const exists = reels.some((reel) => reel.link === newReel.link);
+
+      if (!exists) {
+        reels.push(newReel);
+        chrome.storage.local.set({ trackedReels: reels }, () => {
+          if (chrome.runtime.lastError) {
+            console.error(
+              "Background: Error setting storage:",
+              chrome.runtime.lastError
+            );
+            sendResponse({ status: "Error saving reel" });
+          } else {
+            console.log("Background: Reel added/updated:", newReel.link);
+            sendResponse({ status: "Reel tracked" });
+          }
+        });
+      } else {
+        // Optional: Update view count if already exists? For now, just ignore duplicates.
+        console.log("Background: Reel link already exists, ignoring.");
+        sendResponse({ status: "Reel already tracked" });
+      }
+    });
+    return true; // Indicate asynchronous response
+  }
+
+  // --- Handle Download Request from Popup ---
+  if (request.action === "downloadData") {
+    console.log("Background: Received downloadData request.");
+    chrome.storage.local.get(["trackedReels"], (result) => {
+      if (chrome.runtime.lastError) {
+        console.error(
+          "Background: Error getting storage for download:",
+          chrome.runtime.lastError
+        );
+        sendResponse({ status: "Error getting data for download" });
+        return true;
+      }
+
+      let reels = result.trackedReels || [];
+      if (reels.length === 0) {
+        console.log("Background: No reels tracked to download.");
+        sendResponse({ status: "No data to download" });
+        return true;
+      }
+
+      // Sort by views descending
+      reels.sort((a, b) => b.views - a.views);
+
+      // Format data as text
+      let fileContent = `Total Reels Tracked: ${reels.length}\n\n`;
+      reels.forEach((reel) => {
+        fileContent += `Views: ${reel.views} - Link: ${reel.link}\n`;
+      });
+
+      // Create Blob and Download URL
+      const blob = new Blob([fileContent], { type: "text/plain" });
+      const url = URL.createObjectURL(blob);
+
+      // Trigger download
+      chrome.downloads.download(
+        {
+          url: url,
+          filename: "instagram_reels_sorted.txt",
+          saveAs: true, // Optional: Let user choose filename/location
+        },
+        (downloadId) => {
+          if (chrome.runtime.lastError) {
+            console.error(
+              "Background: Download failed:",
+              chrome.runtime.lastError
+            );
+            sendResponse({ status: "Download failed" });
+          } else {
+            console.log("Background: Download initiated with ID:", downloadId);
+            sendResponse({ status: "Download started" });
+          }
+          // Clean up the object URL after a short delay
+          setTimeout(() => URL.revokeObjectURL(url), 1000);
+        }
+      );
+    });
+    return true; // Indicate asynchronous response
+  }
+
+  // --- Handle Clear Data Request from Popup ---
+  if (request.action === "clearData") {
+    console.log("Background: Received clearData request.");
+    chrome.storage.local.remove("trackedReels", () => {
+      if (chrome.runtime.lastError) {
+        console.error(
+          "Background: Error clearing storage:",
+          chrome.runtime.lastError
+        );
+        sendResponse({ status: "Error clearing data" });
+      } else {
+        // Re-initialize empty array after removing
+        chrome.storage.local.set({ trackedReels: [] }, () => {
+          console.log("Background: Tracked Reels data cleared.");
+          sendResponse({ status: "Data cleared successfully" });
+        });
+      }
+    });
+    return true; // Indicate asynchronous response
+  }
+
+  // Default response if action not recognized
+  // sendResponse({ status: "Unknown action" });
+  return false; // No async response needed if action isn't handled
+});

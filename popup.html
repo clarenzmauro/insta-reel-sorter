@@ -5,18 +5,32 @@
     <style>
       body {
         font-family: sans-serif;
-        width: 150px; /* Adjust as needed */
+        width: 500px; /* Slightly wider */
         padding: 10px;
+        text-align: center;
       }
       button {
         width: 100%;
         padding: 8px;
         cursor: pointer;
+        margin-bottom: 8px;
+      }
+      #clearButton {
+        background-color: #f44336; /* Red */
+        color: white;
+        border: none;
+      }
+      #status {
+        margin-top: 5px;
+        font-size: 0.9em;
+        min-height: 1.2em;
       }
     </style>
   </head>
   <body>
-    <button id="sortButton">Sort Reels by Views</button>
+    <button id="downloadButton">Download Sorted List</button>
+    <button id="clearButton">Clear Stored Data</button>
+    <div id="status"></div>
     <script src="popup.js"></script>
   </body>
 </html>

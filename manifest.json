@@ -1,15 +1,17 @@
 {
   "manifest_version": 3,
-  "name": "Insta Reel Sorter",
-  "version": "0.2.0", 
-  "description": "Manually sort Reels on an Instagram profile page by view count via popup.",
+  "name": "Insta Reel Tracker",
+  "version": "0.3.0",
+  "description": "Tracks Reels (link and views) as you scroll and allows downloading a sorted list.",
   "permissions": [
-    "scripting", 
-    "activeTab" 
+    "scripting",
+    "activeTab",
+    "storage",
+    "downloads"
   ],
   "action": {
-    "default_popup": "popup.html", 
-    "default_icon": { 
+    "default_popup": "popup.html",
+    "default_icon": {
       "16": "images/icon16.png",
       "48": "images/icon48.png",
       "128": "images/icon128.png"
@@ -18,12 +20,17 @@
   "background": {
     "scripts": ["background.js"]
   },
-  "icons": { 
+  "content_scripts": [
+    {
+      "matches": ["*://*.instagram.com/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "icons": {
     "16": "images/icon16.png",
     "48": "images/icon48.png",
     "128": "images/icon128.png"
   },
-  "host_permissions": [ 
-    "*://*.instagram.com/*"
-  ]
+  "host_permissions": ["*://*.instagram.com/*"]
 }
