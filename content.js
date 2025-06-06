@@ -2,9 +2,8 @@ console.log("Insta Reel Tracker: Content script loaded.");
 
 // --- Selectors ---
 // !! Verify these selectors if Instagram changes its structure !!
-const reelSelector = "div.x1qjc9v5.xw3qccf"; // Each post/reel item wrapper
-const linkSelector = "a._a6hd"; // Selector for the link within the reel item
-const iconSelector = 'svg[aria-label="View Count Icon"]'; // View count icon
+const linkSelector = "a._a6hd"; // Primary anchor: the link to the post
+const iconSelector = 'svg[aria-label="View Count Icon"]'; // The specific icon for views
 // --- End Selectors ---
 
 // Keep track of links processed in this specific page load to avoid spamming background
@@ -14,7 +13,6 @@ const processedLinks = new Set();
  * Parses Instagram view count text (e.g., "1.5M", "250K", "987") into a number.
  */
 function parseViewCount(text) {
-  // (Keep your existing parseViewCount function here - unchanged)
   if (!text) {
     return 0;
   }
@@ -33,91 +31,98 @@ function parseViewCount(text) {
 }
 
 /**
- * Processes a DOM element to check if it's a Reel and extracts data.
- * @param {Element} element The DOM element to process.
+ * Processes a link element to find its container and extract Reel data.
+ * @param {HTMLAnchorElement} linkElement The <a> element to process.
  */
-function processElement(element) {
-  // Check if the element itself is a reel container or contains one
-  const reelElement = element.matches(reelSelector)
-    ? element
-    : element.querySelector(reelSelector);
-
-  if (!reelElement) {
-    // Not a reel element or doesn't contain one
+function processLink(linkElement) {
+  if (!linkElement || !linkElement.href) {
     return;
   }
 
-  const linkElement = reelElement.querySelector(linkSelector);
-  const iconElement = reelElement.querySelector(iconSelector);
+  const reelLink = linkElement.href;
 
-  if (linkElement && linkElement.href) {
-    const reelLink = linkElement.href;
+  // Filter out non-post links
+  if (!reelLink.includes("/p/") && !reelLink.includes("/reel/")) {
+    return;
+  }
 
-    // Only process if we haven't seen this link in this session
-    if (!processedLinks.has(reelLink)) {
-      processedLinks.add(reelLink); // Mark as processed for this session
+  // Only process if we haven't seen this link in this session
+  if (processedLinks.has(reelLink)) {
+    return;
+  }
+  processedLinks.add(reelLink); // Mark as processed for this session
 
-      let viewCount = 0;
-      if (iconElement) {
-        const viewSpan = iconElement.closest("div")?.nextElementSibling;
-        if (viewSpan && viewSpan.tagName === "SPAN") {
-          viewCount = parseViewCount(viewSpan.textContent);
-        }
+  const postContainer = linkElement; // The <a> tag is the container
+  let viewCount = 0;
+
+  // --- THE FIX: Find the icon first, then get the number next to it ---
+  const viewCountIcon = postContainer.querySelector(iconSelector);
+
+  // If the icon exists, we know it's a video with views.
+  if (viewCountIcon) {
+    // The structure is usually: <div> -> [icon] </div> <span> [number] </span>
+    // So we find the icon's parent div and get the next element sibling.
+    const iconWrapper = viewCountIcon.parentElement;
+    if (iconWrapper) {
+      const viewSpan = iconWrapper.nextElementSibling;
+      if (viewSpan && viewSpan.tagName === "SPAN") {
+        viewCount = parseViewCount(viewSpan.textContent);
       }
-
-      // Only send if it looks like a reel (has views) or consider sending all links
-      // if (viewCount > 0) { // Optional: Only track items with view counts
-      console.log(
-        `Insta Reel Tracker: Found Reel - Views: ${viewCount}, Link: ${reelLink}`
-      );
-      // Send data to background script for storage
-      chrome.runtime.sendMessage(
-        {
-          action: "trackReel",
-          data: { link: reelLink, views: viewCount },
-        },
-        (response) => {
-          if (chrome.runtime.lastError) {
-            console.error(
-              "Content Script Error sending message:",
-              chrome.runtime.lastError.message
-            );
-          } else {
-            // Optional: console.log("Background response:", response?.status);
-          }
-        }
-      );
-      // }
     }
   }
+
+  console.log(
+    `Insta Reel Tracker: Found Post - Views: ${viewCount}, Link: ${reelLink}`
+  );
+
+  // Send data to background script for storage
+  chrome.runtime.sendMessage(
+    {
+      action: "trackReel",
+      data: { link: reelLink, views: viewCount },
+    },
+    (response) => {
+      if (chrome.runtime.lastError) {
+        console.error(
+          "Content Script Error sending message:",
+          chrome.runtime.lastError.message
+        );
+      }
+    }
+  );
 }
 
-// --- MutationObserver Setup ---
-const observerCallback = (mutationsList, observer) => {
-  for (const mutation of mutationsList) {
-    if (mutation.type === "childList") {
-      mutation.addedNodes.forEach((node) => {
-        // Check if the added node is an Element node
-        if (node.nodeType === Node.ELEMENT_NODE) {
-          processElement(node);
-          // Also check children of the added node, in case reels are nested deeper
-          node
-            .querySelectorAll(reelSelector)
-            .forEach((nestedReel) => processElement(nestedReel));
-        }
-      });
+/**
+ * Scans the entire page for any new reel links that haven't been processed yet.
+ */
+function scanPageForReels() {
+  // Find all links that match our selector on the entire page
+  const allLinksOnPage = document.querySelectorAll(linkSelector);
+
+  // Process each link found. The processLink function will handle duplicates and filtering.
+  allLinksOnPage.forEach(processLink);
+}
+
+// --- Throttled Scroll Listener ---
+function throttle(func, limit) {
+  let inThrottle;
+  return function () {
+    const args = arguments;
+    const context = this;
+    if (!inThrottle) {
+      func.apply(context, args);
+      inThrottle = true;
+      setTimeout(() => (inThrottle = false), limit);
     }
-  }
-};
+  };
+}
 
-// Start observing the body for additions. We could target a more specific container
-// but body is often reliable for catching dynamically added content wrappers.
-const observer = new MutationObserver(observerCallback);
-observer.observe(document.body, { childList: true, subtree: true });
+const throttleLimit = 500; // Scan at most once every 500ms during scroll.
 
-console.log("Insta Reel Tracker: MutationObserver is watching.");
+// Add the throttled listener to the window's scroll event
+window.addEventListener("scroll", throttle(scanPageForReels, throttleLimit));
 
-// Optional: Process elements already on the page when the script loads
-document
-  .querySelectorAll(reelSelector)
-  .forEach((element) => processElement(element));
+console.log(`Insta Reel Tracker: Scroll listener added (throttled to ${throttleLimit}ms).`);
+
+// Run one initial scan immediately on load to catch the first batch of posts
+scanPageForReels();
